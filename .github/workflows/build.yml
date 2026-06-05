@@ -1,0 +1,58 @@
+# GitHub Actions: Auto-build .exe from .py via PyInstaller
+name: Build EXE
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          if (Test-Path "requirements.txt") {
+            Get-Content "requirements.txt" | ForEach-Object {
+              $pkg = $_.Trim()
+              if ($pkg -and $pkg -notmatch '^#') {
+                pip install $pkg
+              }
+            }
+          }
+
+      - name: Build EXE
+        run: |
+          $files = @(Get-ChildItem -Path "$env:GITHUB_WORKSPACE" -Filter "*.py" -Recurse | Where-Object { $_.Name -ne "setup.py" })
+          foreach ($f in $files) {
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+
+            # 自动收集 requirements.txt 中所有包 → --collect-all 参数
+            $collectArgs = @()
+            if (Test-Path "requirements.txt") {
+              Get-Content "requirements.txt" | ForEach-Object {
+                $pkg = $_.Trim()
+                if ($pkg -and $pkg -notmatch '^#') {
+                  $collectArgs += "--collect-all"
+                  $collectArgs += $pkg
+                }
+              }
+            }
+
+            pyinstaller --onefile --console --name "$name" @collectArgs "$($f.FullName)" 2>&1
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-exe
+          path: dist/*.exe
+          if-no-files-found: error
